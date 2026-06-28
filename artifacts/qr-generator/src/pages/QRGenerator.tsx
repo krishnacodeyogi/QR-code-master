@@ -7,45 +7,99 @@ type ECLevel = "L" | "M" | "Q" | "H";
 
 export default function QRGenerator() {
   const [text, setText] = useState("");
-  const [debouncedText, setDebouncedText] = useState("");
   const [fgColor, setFgColor] = useState("#ffffff");
   const [bgColor, setBgColor] = useState("#1e1b4b");
   const [size, setSize] = useState(250);
   const [ecLevel, setEcLevel] = useState<ECLevel>("M");
   const [hasQR, setHasQR] = useState(false);
 
+  // Always mounted — never conditionally rendered — so the ref is always valid
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { toast } = useToast();
 
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedText(text), 300);
-    return () => clearTimeout(timer);
-  }, [text]);
-
-  const generateQRCode = useCallback(async () => {
-    if (!canvasRef.current) return;
-    if (!debouncedText) {
-      const ctx = canvasRef.current.getContext("2d");
-      if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+  /**
+   * Core generation function. Accepts the input text directly so it can be
+   * called both from the debounce effect AND from the manual button without
+   * depending on debouncedText state being current.
+   */
+  const runGenerate = useCallback(async (inputText: string) => {
+    // 1. Input validation — reject empty or whitespace-only strings
+    const trimmed = inputText.trim();
+    if (!trimmed) {
+      if (canvasRef.current) {
+        const ctx = canvasRef.current.getContext("2d");
+        if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
       setHasQR(false);
+      if (inputText.length > 0) {
+        // User typed only spaces — give a friendly warning
+        toast({
+          title: "Invalid input",
+          description: "Please enter a valid URL or text.",
+          variant: "destructive",
+        });
+      }
       return;
     }
+
+    // 2. Ensure canvas is mounted in the DOM
+    if (!canvasRef.current) {
+      console.error("QR canvas element is not mounted.");
+      return;
+    }
+
+    // 3. Clear previous QR before drawing a new one
+    const ctx = canvasRef.current.getContext("2d");
+    if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+
+    // 4. Generate with full try-catch and console.error for debugging
     try {
-      await QRCode.toCanvas(canvasRef.current, debouncedText, {
+      await QRCode.toCanvas(canvasRef.current, trimmed, {
         width: size,
         margin: 2,
         color: { dark: fgColor, light: bgColor },
         errorCorrectionLevel: ecLevel,
       });
       setHasQR(true);
-    } catch {
-      toast({ title: "Generation failed", description: "Could not generate QR code.", variant: "destructive" });
+    } catch (err) {
+      console.error("QR generation error:", err);
+      setHasQR(false);
+      toast({
+        title: "Generation failed",
+        description: "Could not generate QR code. Check your input and try again.",
+        variant: "destructive",
+      });
     }
-  }, [debouncedText, fgColor, bgColor, size, ecLevel, toast]);
+  }, [fgColor, bgColor, size, ecLevel, toast]);
 
-  useEffect(() => { generateQRCode(); }, [generateQRCode]);
+  // Debounce: re-run whenever the user pauses typing for 300 ms
+  useEffect(() => {
+    const timer = setTimeout(() => runGenerate(text), 300);
+    return () => clearTimeout(timer);
+  }, [text, runGenerate]);
 
-  const handleManualGenerate = () => { setDebouncedText(text); };
+  // Also re-run when any option (color / size / EC level) changes
+  useEffect(() => {
+    if (text.trim()) runGenerate(text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fgColor, bgColor, size, ecLevel]);
+
+  /**
+   * Manual button: calls runGenerate directly with the current text value.
+   * This works even when text hasn't changed since the last debounce tick,
+   * because we bypass state and invoke the function directly.
+   */
+  const handleManualGenerate = () => {
+    if (!text.trim()) {
+      toast({
+        title: "Nothing to generate",
+        description: "Please enter a URL or text first.",
+        variant: "destructive",
+      });
+      return;
+    }
+    runGenerate(text);
+  };
 
   const handleDownload = () => {
     if (!canvasRef.current || !hasQR) return;
@@ -394,31 +448,35 @@ export default function QRGenerator() {
             Preview
           </h2>
 
-          {/* QR Preview area */}
-          <div className="flex-1 flex flex-col items-center justify-center min-h-[280px]">
-            {hasQR ? (
-              <div className="qr-appear flex flex-col items-center gap-4">
-                <div
-                  className="rounded-2xl overflow-hidden qr-glow-ring"
-                  style={{ border: "1px solid rgba(180, 140, 255, 0.15)" }}
-                >
-                  <canvas
-                    ref={canvasRef}
-                    data-testid="canvas-qr-preview"
-                    style={{ display: "block", width: size, height: size }}
-                  />
-                </div>
-                <div
-                  className="text-xs font-mono tracking-widest"
-                  style={{ color: "rgba(180, 150, 255, 0.4)" }}
-                >
-                  {size} × {size} PX
-                </div>
+          {/* QR Preview area — canvas is always mounted so canvasRef is never null */}
+          <div className="flex-1 flex flex-col items-center justify-center min-h-[280px] relative">
+
+            {/* Canvas wrapper — hidden until a QR is generated */}
+            <div
+              className="flex flex-col items-center gap-4 transition-opacity duration-300"
+              style={{ opacity: hasQR ? 1 : 0, pointerEvents: hasQR ? "auto" : "none" }}
+            >
+              <div
+                className="rounded-2xl overflow-hidden qr-glow-ring"
+                style={{ border: "1px solid rgba(180, 140, 255, 0.15)" }}
+              >
+                <canvas
+                  ref={canvasRef}
+                  data-testid="canvas-qr-preview"
+                  style={{ display: "block", width: size, height: size }}
+                />
               </div>
-            ) : (
-              <>
-                {/* Hidden canvas kept in DOM for generation */}
-                <canvas ref={canvasRef} data-testid="canvas-qr-preview" style={{ display: "none" }} />
+              <div
+                className="text-xs font-mono tracking-widest"
+                style={{ color: "rgba(180, 150, 255, 0.4)" }}
+              >
+                {size} × {size} PX
+              </div>
+            </div>
+
+            {/* Empty state — shown on top when no QR exists */}
+            {!hasQR && (
+              <div className="absolute inset-0 flex items-center justify-center">
                 <div
                   className="flex flex-col items-center justify-center text-center p-8 rounded-2xl w-full max-w-[260px] aspect-square"
                   style={{
@@ -444,7 +502,7 @@ export default function QRGenerator() {
                     your QR code.
                   </p>
                 </div>
-              </>
+              </div>
             )}
           </div>
 
