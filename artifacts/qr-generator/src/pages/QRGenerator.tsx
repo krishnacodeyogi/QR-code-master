@@ -12,6 +12,8 @@ export default function QRGenerator() {
   const [size, setSize] = useState(250);
   const [ecLevel, setEcLevel] = useState<ECLevel>("M");
   const [hasQR, setHasQR] = useState(false);
+  const [renderedSize, setRenderedSize] = useState(250);
+  const [scanQuality, setScanQuality] = useState<"good" | "fair" | "dense" | null>(null);
 
   // Always mounted — never conditionally rendered — so the ref is always valid
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -21,6 +23,13 @@ export default function QRGenerator() {
    * Core generation function. Accepts the input text directly so it can be
    * called both from the debounce effect AND from the manual button without
    * depending on debouncedText state being current.
+   *
+   * WHY the auto-scale logic exists:
+   *   A QR code's module count is fixed by its version (1–40). Version 40
+   *   has 177×177 modules. At a 250px canvas that's ~1.4 px/module — no
+   *   camera can resolve that. We guarantee a minimum of 4 px per module by
+   *   computing the required canvas size BEFORE rendering, so long text always
+   *   produces a scannable code.
    */
   const runGenerate = useCallback(async (inputText: string) => {
     // 1. Input validation — reject empty or whitespace-only strings
@@ -31,8 +40,8 @@ export default function QRGenerator() {
         if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
       }
       setHasQR(false);
+      setScanQuality(null);
       if (inputText.length > 0) {
-        // User typed only spaces — give a friendly warning
         toast({
           title: "Invalid input",
           description: "Please enter a valid URL or text.",
@@ -52,18 +61,53 @@ export default function QRGenerator() {
     const ctx = canvasRef.current.getContext("2d");
     if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
-    // 4. Generate with full try-catch and console.error for debugging
+    // 4. Compute the minimum canvas size needed for a scannable result.
+    //    QRCode.create() returns the QR data structure including the module
+    //    grid dimensions — no canvas needed, it's a pure calculation.
+    const MARGIN_MODULES = 2; // quiet zone on each side
+    const MIN_PX_PER_MODULE = 4; // below this cameras struggle
+
+    let actualSize = size;
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const qrData = (QRCode as any).create(trimmed, { errorCorrectionLevel: ecLevel });
+      const moduleCount: number = qrData.modules.size; // e.g. 177 for version 40
+
+      // Total modules across the canvas including the quiet zone on both sides
+      const totalModules = moduleCount + MARGIN_MODULES * 2;
+
+      // Minimum canvas size for this data density
+      const minSize = totalModules * MIN_PX_PER_MODULE;
+
+      // Use the larger of: user's chosen size vs. minimum readable size
+      actualSize = Math.max(size, minSize);
+
+      // Classify scan quality based on actual pixels-per-module
+      const pxPerModule = actualSize / totalModules;
+      if (pxPerModule >= 6) setScanQuality("good");
+      else if (pxPerModule >= 4) setScanQuality("fair");
+      else setScanQuality("dense");
+    } catch {
+      // If create() fails (shouldn't happen), fall back to user's size
+      actualSize = size;
+      setScanQuality(null);
+    }
+
+    // 5. Render to canvas with the guaranteed-scannable size
     try {
       await QRCode.toCanvas(canvasRef.current, trimmed, {
-        width: size,
-        margin: 2,
+        width: actualSize,
+        margin: MARGIN_MODULES,
         color: { dark: fgColor, light: bgColor },
         errorCorrectionLevel: ecLevel,
       });
+      setRenderedSize(actualSize);
       setHasQR(true);
     } catch (err) {
       console.error("QR generation error:", err);
       setHasQR(false);
+      setScanQuality(null);
       toast({
         title: "Generation failed",
         description: "Could not generate QR code. Check your input and try again.",
@@ -199,11 +243,35 @@ export default function QRGenerator() {
                   fontFamily: "var(--app-font-sans)",
                 }}
               />
-              <div
-                className="px-4 pb-3 text-right text-xs font-mono"
-                style={{ color: "rgba(180, 150, 255, 0.35)" }}
-              >
-                {text.length} characters
+              <div className="px-4 pb-3 flex items-center justify-between">
+                {/* Density warning — appears when text length risks small modules */}
+                <span className="text-xs font-mono transition-all duration-300"
+                  style={{
+                    color: text.length > 500
+                      ? "rgba(251, 146, 60, 0.85)"
+                      : text.length > 200
+                      ? "rgba(250, 204, 21, 0.7)"
+                      : "transparent",
+                    fontSize: "10px",
+                  }}
+                >
+                  {text.length > 500
+                    ? "Very dense — QR auto-scaled for scanning"
+                    : text.length > 200
+                    ? "Long text — QR will be enlarged"
+                    : ""}
+                </span>
+                <span className="text-xs font-mono"
+                  style={{
+                    color: text.length > 500
+                      ? "rgba(251, 146, 60, 0.8)"
+                      : text.length > 200
+                      ? "rgba(250, 204, 21, 0.65)"
+                      : "rgba(180, 150, 255, 0.35)",
+                  }}
+                >
+                  {text.length} / 2953
+                </span>
               </div>
             </div>
           </div>
@@ -463,14 +531,70 @@ export default function QRGenerator() {
                 <canvas
                   ref={canvasRef}
                   data-testid="canvas-qr-preview"
-                  style={{ display: "block", width: size, height: size }}
+                  style={{ display: "block", width: renderedSize, height: renderedSize, maxWidth: "100%" }}
                 />
               </div>
-              <div
-                className="text-xs font-mono tracking-widest"
-                style={{ color: "rgba(180, 150, 255, 0.4)" }}
-              >
-                {size} × {size} PX
+
+              {/* Size + scan quality row */}
+              <div className="flex flex-col items-center gap-2">
+                <span
+                  className="text-xs font-mono tracking-widest"
+                  style={{ color: "rgba(180, 150, 255, 0.4)" }}
+                >
+                  {renderedSize} × {renderedSize} PX
+                  {renderedSize > size && (
+                    <span style={{ color: "rgba(250, 204, 21, 0.65)", marginLeft: 6 }}>
+                      (auto-scaled)
+                    </span>
+                  )}
+                </span>
+
+                {/* Scan quality pill */}
+                {scanQuality && (
+                  <div
+                    className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold tracking-wide"
+                    style={{
+                      background: scanQuality === "good"
+                        ? "rgba(34, 197, 94, 0.12)"
+                        : scanQuality === "fair"
+                        ? "rgba(250, 204, 21, 0.12)"
+                        : "rgba(251, 146, 60, 0.12)",
+                      border: `1px solid ${
+                        scanQuality === "good"
+                          ? "rgba(34, 197, 94, 0.3)"
+                          : scanQuality === "fair"
+                          ? "rgba(250, 204, 21, 0.3)"
+                          : "rgba(251, 146, 60, 0.3)"
+                      }`,
+                      color: scanQuality === "good"
+                        ? "rgba(74, 222, 128, 0.9)"
+                        : scanQuality === "fair"
+                        ? "rgba(250, 204, 21, 0.85)"
+                        : "rgba(251, 146, 60, 0.9)",
+                    }}
+                  >
+                    <span
+                      className="w-1.5 h-1.5 rounded-full"
+                      style={{
+                        background: scanQuality === "good"
+                          ? "rgba(74, 222, 128, 0.9)"
+                          : scanQuality === "fair"
+                          ? "rgba(250, 204, 21, 0.85)"
+                          : "rgba(251, 146, 60, 0.9)",
+                        boxShadow: scanQuality === "good"
+                          ? "0 0 6px rgba(74, 222, 128, 0.8)"
+                          : scanQuality === "fair"
+                          ? "0 0 6px rgba(250, 204, 21, 0.8)"
+                          : "0 0 6px rgba(251, 146, 60, 0.8)",
+                      }}
+                    />
+                    {scanQuality === "good"
+                      ? "Scan quality: Excellent"
+                      : scanQuality === "fair"
+                      ? "Scan quality: Good"
+                      : "Scan quality: Dense — try error level L"}
+                  </div>
+                )}
               </div>
             </div>
 
