@@ -11,6 +11,60 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "QR Code Generator"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "API Server"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Mockup Sandbox"
+
+[[workflows.workflow]]
+name = "QR Code Generator"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd artifacts/qr-generator && PORT=25796 BASE_PATH=/ pnpm run dev"
+waitForPort = 25796
+
+[[workflows.workflow]]
+name = "API Server"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd artifacts/api-server && PORT=8080 pnpm run dev"
+waitForPort = 8080
+
+[[workflows.workflow]]
+name = "Mockup Sandbox"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "webview"
+isCanvasWorkflow = true
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd artifacts/mockup-sandbox && PORT=8081 BASE_PATH=/__mockup pnpm run dev"
+waitForPort = 8081
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
@@ -21,3 +75,12 @@ timeoutMs = 20000
 
 [nix]
 channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+PORT_QR = "25796"
+BASE_PATH_QR = "/"
+PORT_API = "8080"
+PORT_MOCKUP = "8081"
+BASE_PATH_MOCKUP = "/__mockup"
