@@ -15,24 +15,10 @@ export default function QRGenerator() {
   const [renderedSize, setRenderedSize] = useState(250);
   const [scanQuality, setScanQuality] = useState<"good" | "fair" | "dense" | null>(null);
 
-  // Always mounted — never conditionally rendered — so the ref is always valid
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { toast } = useToast();
 
-  /**
-   * Core generation function. Accepts the input text directly so it can be
-   * called both from the debounce effect AND from the manual button without
-   * depending on debouncedText state being current.
-   *
-   * WHY the auto-scale logic exists:
-   *   A QR code's module count is fixed by its version (1–40). Version 40
-   *   has 177×177 modules. At a 250px canvas that's ~1.4 px/module — no
-   *   camera can resolve that. We guarantee a minimum of 4 px per module by
-   *   computing the required canvas size BEFORE rendering, so long text always
-   *   produces a scannable code.
-   */
   const runGenerate = useCallback(async (inputText: string) => {
-    // 1. Input validation — reject empty or whitespace-only strings
     const trimmed = inputText.trim();
     if (!trimmed) {
       if (canvasRef.current) {
@@ -51,50 +37,32 @@ export default function QRGenerator() {
       return;
     }
 
-    // 2. Ensure canvas is mounted in the DOM
-    if (!canvasRef.current) {
-      console.error("QR canvas element is not mounted.");
-      return;
-    }
+    if (!canvasRef.current) return;
 
-    // 3. Clear previous QR before drawing a new one
     const ctx = canvasRef.current.getContext("2d");
     if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
-    // 4. Compute the minimum canvas size needed for a scannable result.
-    //    QRCode.create() returns the QR data structure including the module
-    //    grid dimensions — no canvas needed, it's a pure calculation.
-    const MARGIN_MODULES = 2; // quiet zone on each side
-    const MIN_PX_PER_MODULE = 4; // below this cameras struggle
-
+    const MARGIN_MODULES = 2;
+    const MIN_PX_PER_MODULE = 4;
     let actualSize = size;
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const qrData = (QRCode as any).create(trimmed, { errorCorrectionLevel: ecLevel });
-      const moduleCount: number = qrData.modules.size; // e.g. 177 for version 40
-
-      // Total modules across the canvas including the quiet zone on both sides
+      const moduleCount: number = qrData.modules.size;
       const totalModules = moduleCount + MARGIN_MODULES * 2;
-
-      // Minimum canvas size for this data density
       const minSize = totalModules * MIN_PX_PER_MODULE;
-
-      // Use the larger of: user's chosen size vs. minimum readable size
       actualSize = Math.max(size, minSize);
 
-      // Classify scan quality based on actual pixels-per-module
       const pxPerModule = actualSize / totalModules;
       if (pxPerModule >= 6) setScanQuality("good");
       else if (pxPerModule >= 4) setScanQuality("fair");
       else setScanQuality("dense");
     } catch {
-      // If create() fails (shouldn't happen), fall back to user's size
       actualSize = size;
       setScanQuality(null);
     }
 
-    // 5. Render to canvas with the guaranteed-scannable size
     try {
       await QRCode.toCanvas(canvasRef.current, trimmed, {
         width: actualSize,
@@ -116,23 +84,16 @@ export default function QRGenerator() {
     }
   }, [fgColor, bgColor, size, ecLevel, toast]);
 
-  // Debounce: re-run whenever the user pauses typing for 300 ms
   useEffect(() => {
     const timer = setTimeout(() => runGenerate(text), 300);
     return () => clearTimeout(timer);
   }, [text, runGenerate]);
 
-  // Also re-run when any option (color / size / EC level) changes
   useEffect(() => {
     if (text.trim()) runGenerate(text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fgColor, bgColor, size, ecLevel]);
 
-  /**
-   * Manual button: calls runGenerate directly with the current text value.
-   * This works even when text hasn't changed since the last debounce tick,
-   * because we bypass state and invoke the function directly.
-   */
   const handleManualGenerate = () => {
     if (!text.trim()) {
       toast({
@@ -176,8 +137,8 @@ export default function QRGenerator() {
   const sizePercent = ((size - 150) / (400 - 150)) * 100;
 
   return (
-    <div className="nebula-bg min-h-screen flex items-center justify-center p-4 sm:p-8 relative overflow-hidden">
-      {/* Subtle nebula cloud overlays */}
+    <div className="nebula-bg min-h-screen flex items-start justify-center p-3 sm:p-6 lg:p-8 relative overflow-x-hidden">
+      {/* Nebula overlays */}
       <div
         className="pointer-events-none fixed inset-0 z-0"
         style={{
@@ -189,311 +150,11 @@ export default function QRGenerator() {
         }}
       />
 
-      <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-12 gap-5 relative z-10">
+      <div className="w-full max-w-5xl flex flex-col lg:grid lg:grid-cols-12 gap-4 sm:gap-5 relative z-10 my-3 sm:my-6">
 
-        {/* ── LEFT PANEL ── */}
-        <div className="lg:col-span-7 flex flex-col gap-6 p-7 sm:p-9 rounded-3xl glass-panel glass-panel-hover">
-
-          {/* Header */}
-          <div>
-            <h1
-              className="text-4xl sm:text-5xl font-bold tracking-tight mb-2"
-              style={{
-                background: "linear-gradient(135deg, #c084fc 0%, #a78bfa 40%, #818cf8 100%)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-                backgroundClip: "text",
-                filter: "drop-shadow(0 0 18px rgba(192, 132, 252, 0.4))",
-              }}
-            >
-              QR Studio
-            </h1>
-            <p className="text-sm font-light" style={{ color: "rgba(196, 181, 253, 0.55)" }}>
-              Craft precision QR codes instantly.
-            </p>
-          </div>
-
-          {/* Content textarea */}
-          <div className="space-y-2">
-            <label
-              htmlFor="qr-input"
-              className="text-xs font-semibold uppercase tracking-widest"
-              style={{ color: "rgba(196, 181, 253, 0.6)" }}
-            >
-              Content
-            </label>
-            <div
-              className="input-glow rounded-2xl overflow-hidden"
-              style={{
-                background: "rgba(0, 0, 0, 0.25)",
-                border: "1px solid rgba(180, 140, 255, 0.14)",
-                boxShadow: "inset 0 2px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.04)",
-              }}
-            >
-              <textarea
-                id="qr-input"
-                data-testid="input-qr-content"
-                placeholder="Enter URL or text..."
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                rows={4}
-                className="w-full bg-transparent resize-none px-4 pt-4 pb-2 text-sm outline-none"
-                style={{
-                  color: "rgba(230, 220, 255, 0.9)",
-                  fontFamily: "var(--app-font-sans)",
-                }}
-              />
-              <div className="px-4 pb-3 flex items-center justify-between">
-                {/* Density warning — appears when text length risks small modules */}
-                <span className="text-xs font-mono transition-all duration-300"
-                  style={{
-                    color: text.length > 500
-                      ? "rgba(251, 146, 60, 0.85)"
-                      : text.length > 200
-                      ? "rgba(250, 204, 21, 0.7)"
-                      : "transparent",
-                    fontSize: "10px",
-                  }}
-                >
-                  {text.length > 500
-                    ? "Very dense — QR auto-scaled for scanning"
-                    : text.length > 200
-                    ? "Long text — QR will be enlarged"
-                    : ""}
-                </span>
-                <span className="text-xs font-mono"
-                  style={{
-                    color: text.length > 500
-                      ? "rgba(251, 146, 60, 0.8)"
-                      : text.length > 200
-                      ? "rgba(250, 204, 21, 0.65)"
-                      : "rgba(180, 150, 255, 0.35)",
-                  }}
-                >
-                  {text.length} / 2953
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Controls row */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-
-            {/* Color pickers */}
-            <div className="space-y-4">
-              {/* QR Color */}
-              <div className="space-y-2">
-                <span
-                  className="text-xs font-semibold uppercase tracking-widest"
-                  style={{ color: "rgba(196, 181, 253, 0.6)" }}
-                >
-                  QR Color
-                </span>
-                <div className="color-pill flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer">
-                  <div
-                    className="relative w-9 h-9 rounded-full overflow-hidden flex-shrink-0 cursor-pointer"
-                    style={{
-                      border: "2px solid rgba(200, 170, 255, 0.25)",
-                      boxShadow: `0 0 12px ${fgColor}44`,
-                    }}
-                  >
-                    <input
-                      type="color"
-                      data-testid="input-qr-fg-color"
-                      value={fgColor}
-                      onChange={(e) => setFgColor(e.target.value)}
-                      className="absolute -top-2 -left-2 w-14 h-14 cursor-pointer opacity-0"
-                    />
-                    <div className="w-full h-full rounded-full" style={{ background: fgColor }} />
-                  </div>
-                  <span
-                    className="text-sm font-mono font-medium uppercase tracking-wider flex-1"
-                    style={{ color: "rgba(220, 205, 255, 0.8)" }}
-                  >
-                    {fgColor}
-                  </span>
-                </div>
-              </div>
-
-              {/* Swap button */}
-              <div className="flex justify-start pl-1">
-                <button
-                  onClick={handleSwapColors}
-                  className="swap-icon p-1.5 rounded-lg hover:bg-white/5 transition-colors"
-                  title="Swap colors"
-                  data-testid="button-swap-colors"
-                >
-                  <ArrowLeftRight className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Background Color */}
-              <div className="space-y-2">
-                <span
-                  className="text-xs font-semibold uppercase tracking-widest"
-                  style={{ color: "rgba(196, 181, 253, 0.6)" }}
-                >
-                  Background Color
-                </span>
-                <div className="color-pill flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer">
-                  <div
-                    className="relative w-9 h-9 rounded-full overflow-hidden flex-shrink-0"
-                    style={{
-                      border: "2px solid rgba(200, 170, 255, 0.25)",
-                      boxShadow: `0 0 12px ${bgColor}44`,
-                    }}
-                  >
-                    <input
-                      type="color"
-                      data-testid="input-qr-bg-color"
-                      value={bgColor}
-                      onChange={(e) => setBgColor(e.target.value)}
-                      className="absolute -top-2 -left-2 w-14 h-14 cursor-pointer opacity-0"
-                    />
-                    <div className="w-full h-full rounded-full" style={{ background: bgColor }} />
-                  </div>
-                  <span
-                    className="text-sm font-mono font-medium uppercase tracking-wider flex-1"
-                    style={{ color: "rgba(220, 205, 255, 0.8)" }}
-                  >
-                    {bgColor}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Size + EC */}
-            <div className="space-y-6">
-              {/* Size slider */}
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <span
-                    className="text-xs font-semibold uppercase tracking-widest"
-                    style={{ color: "rgba(196, 181, 253, 0.6)" }}
-                  >
-                    QR Size
-                  </span>
-                  <span
-                    className="text-sm font-mono font-medium px-2.5 py-0.5 rounded-lg"
-                    style={{
-                      color: "rgba(196, 181, 253, 0.9)",
-                      background: "rgba(124, 58, 237, 0.15)",
-                      border: "1px solid rgba(167, 139, 250, 0.2)",
-                    }}
-                  >
-                    {size}px
-                  </span>
-                </div>
-
-                {/* Custom gradient slider */}
-                <div className="relative h-6 flex items-center">
-                  {/* Track background */}
-                  <div
-                    className="absolute w-full h-1.5 rounded-full"
-                    style={{
-                      background: "rgba(255,255,255,0.08)",
-                    }}
-                  />
-                  {/* Filled track */}
-                  <div
-                    className="absolute h-1.5 rounded-full"
-                    style={{
-                      width: `${sizePercent}%`,
-                      background: "linear-gradient(90deg, #7c3aed, #8b5cf6, #a78bfa, #c4b5fd)",
-                      boxShadow: "0 0 8px rgba(139, 92, 246, 0.5)",
-                    }}
-                  />
-                  {/* Native input overlay */}
-                  <input
-                    type="range"
-                    data-testid="input-qr-size"
-                    min={150}
-                    max={400}
-                    step={50}
-                    value={size}
-                    onChange={(e) => setSize(Number(e.target.value))}
-                    className="absolute w-full h-full opacity-0 cursor-pointer"
-                    style={{ zIndex: 10 }}
-                  />
-                  {/* Thumb */}
-                  <div
-                    className="absolute w-5 h-5 rounded-full pointer-events-none"
-                    style={{
-                      left: `calc(${sizePercent}% - ${sizePercent * 0.08}px - 4px)`,
-                      background: "linear-gradient(135deg, #c084fc, #7c3aed)",
-                      border: "2px solid rgba(255,255,255,0.35)",
-                      boxShadow: "0 0 14px rgba(139, 92, 246, 0.7), 0 2px 6px rgba(0,0,0,0.4)",
-                      zIndex: 5,
-                    }}
-                  />
-                </div>
-
-                {/* Size labels */}
-                <div className="flex justify-between px-0.5">
-                  {[150, 200, 250, 300, 350, 400].map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => setSize(s)}
-                      className="text-xs font-mono transition-colors"
-                      style={{
-                        color: size === s
-                          ? "rgba(196, 181, 253, 0.9)"
-                          : "rgba(180, 150, 255, 0.28)",
-                      }}
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Error correction */}
-              <div className="space-y-2">
-                <span
-                  className="text-xs font-semibold uppercase tracking-widest"
-                  style={{ color: "rgba(196, 181, 253, 0.6)" }}
-                >
-                  Error Correction
-                </span>
-                <div className="ec-segment flex rounded-xl p-1 gap-1">
-                  {(["L", "M", "Q", "H"] as ECLevel[]).map((lvl) => (
-                    <button
-                      key={lvl}
-                      data-testid={`input-ec-${lvl.toLowerCase()}`}
-                      onClick={() => setEcLevel(lvl)}
-                      className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all duration-200 ${
-                        ecLevel === lvl ? "ec-item-active" : ""
-                      }`}
-                      style={
-                        ecLevel !== lvl
-                          ? { color: "rgba(180, 150, 255, 0.45)" }
-                          : undefined
-                      }
-                    >
-                      {lvl}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Generate button */}
-          <div className="mt-auto pt-2">
-            <button
-              data-testid="button-generate"
-              onClick={handleManualGenerate}
-              className="btn-generate w-full flex items-center justify-center gap-3 py-4 rounded-2xl text-white font-semibold text-base tracking-wide"
-            >
-              <Wand2 className="w-5 h-5" style={{ filter: "drop-shadow(0 0 6px rgba(255,255,255,0.6))" }} />
-              Generate QR Code
-            </button>
-          </div>
-        </div>
-
-        {/* ── RIGHT PANEL ── */}
+        {/* ── RIGHT PANEL (Preview) — shown first on mobile ── */}
         <div
-          className="lg:col-span-5 flex flex-col p-7 sm:p-8 rounded-3xl glass-panel glass-panel-hover relative overflow-hidden"
+          className="lg:col-span-5 lg:order-2 flex flex-col p-5 sm:p-7 rounded-2xl sm:rounded-3xl glass-panel glass-panel-hover relative overflow-hidden"
         >
           {/* Subtle top glow */}
           <div
@@ -509,34 +170,38 @@ export default function QRGenerator() {
 
           {/* Header */}
           <h2
-            className="text-sm font-semibold uppercase tracking-widest flex items-center gap-2.5 mb-6"
+            className="text-xs sm:text-sm font-semibold uppercase tracking-widest flex items-center gap-2 mb-4 sm:mb-6"
             style={{ color: "rgba(196, 181, 253, 0.7)" }}
           >
-            <QrCode className="w-4 h-4" style={{ color: "rgba(167, 139, 250, 0.8)" }} />
+            <QrCode className="w-3.5 h-3.5 sm:w-4 sm:h-4" style={{ color: "rgba(167, 139, 250, 0.8)" }} />
             Preview
           </h2>
 
-          {/* QR Preview area — canvas is always mounted so canvasRef is never null */}
-          <div className="flex-1 flex flex-col items-center justify-center min-h-[280px] relative">
+          {/* QR Preview area */}
+          <div className="flex-1 flex flex-col items-center justify-center min-h-[200px] sm:min-h-[280px] relative">
 
-            {/* Canvas wrapper — hidden until a QR is generated */}
             <div
-              className="flex flex-col items-center gap-4 transition-opacity duration-300"
+              className="flex flex-col items-center gap-3 sm:gap-4 transition-opacity duration-300 w-full"
               style={{ opacity: hasQR ? 1 : 0, pointerEvents: hasQR ? "auto" : "none" }}
             >
               <div
-                className="rounded-2xl overflow-hidden qr-glow-ring"
+                className="rounded-xl sm:rounded-2xl overflow-hidden qr-glow-ring w-full flex items-center justify-center"
                 style={{ border: "1px solid rgba(180, 140, 255, 0.15)" }}
               >
                 <canvas
                   ref={canvasRef}
                   data-testid="canvas-qr-preview"
-                  style={{ display: "block", width: renderedSize, height: renderedSize, maxWidth: "100%" }}
+                  style={{
+                    display: "block",
+                    width: renderedSize,
+                    height: renderedSize,
+                    maxWidth: "100%",
+                    maxHeight: "60vw",
+                  }}
                 />
               </div>
 
-              {/* Size + scan quality row */}
-              <div className="flex flex-col items-center gap-2">
+              <div className="flex flex-col items-center gap-1.5 sm:gap-2">
                 <span
                   className="text-xs font-mono tracking-widest"
                   style={{ color: "rgba(180, 150, 255, 0.4)" }}
@@ -549,10 +214,9 @@ export default function QRGenerator() {
                   )}
                 </span>
 
-                {/* Scan quality pill */}
                 {scanQuality && (
                   <div
-                    className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold tracking-wide"
+                    className="flex items-center gap-1.5 px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full text-xs font-semibold tracking-wide"
                     style={{
                       background: scanQuality === "good"
                         ? "rgba(34, 197, 94, 0.12)"
@@ -589,36 +253,36 @@ export default function QRGenerator() {
                       }}
                     />
                     {scanQuality === "good"
-                      ? "Scan quality: Excellent"
+                      ? "Excellent"
                       : scanQuality === "fair"
-                      ? "Scan quality: Good"
-                      : "Scan quality: Dense — try error level L"}
+                      ? "Good"
+                      : "Dense — try L"}
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Empty state — shown on top when no QR exists */}
+            {/* Empty state */}
             {!hasQR && (
               <div className="absolute inset-0 flex items-center justify-center">
                 <div
-                  className="flex flex-col items-center justify-center text-center p-8 rounded-2xl w-full max-w-[260px] aspect-square"
+                  className="flex flex-col items-center justify-center text-center p-6 rounded-2xl w-full max-w-[200px] sm:max-w-[260px] aspect-square"
                   style={{
                     background: "rgba(0,0,0,0.18)",
                     border: "1.5px dashed rgba(180, 140, 255, 0.14)",
                   }}
                 >
                   <div
-                    className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4"
+                    className="w-11 h-11 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center mb-3 sm:mb-4"
                     style={{
                       background: "rgba(124, 58, 237, 0.1)",
                       border: "1px solid rgba(167, 139, 250, 0.15)",
                     }}
                   >
-                    <QrCode className="w-7 h-7" style={{ color: "rgba(167, 139, 250, 0.35)" }} />
+                    <QrCode className="w-5 h-5 sm:w-7 sm:h-7" style={{ color: "rgba(167, 139, 250, 0.35)" }} />
                   </div>
                   <p
-                    className="text-sm leading-relaxed"
+                    className="text-xs sm:text-sm leading-relaxed"
                     style={{ color: "rgba(180, 150, 255, 0.4)" }}
                   >
                     Enter content to generate
@@ -632,7 +296,7 @@ export default function QRGenerator() {
 
           {/* Action bar */}
           <div
-            className="mt-6 flex gap-3 p-1.5 rounded-2xl"
+            className="mt-4 sm:mt-6 flex gap-2 sm:gap-3 p-1 sm:p-1.5 rounded-xl sm:rounded-2xl"
             style={{
               background: "rgba(0,0,0,0.2)",
               border: "1px solid rgba(180, 140, 255, 0.1)",
@@ -642,22 +306,317 @@ export default function QRGenerator() {
               data-testid="button-download"
               onClick={handleDownload}
               disabled={!hasQR}
-              className="btn-action flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-medium"
+              className="btn-action flex-1 flex items-center justify-center gap-1.5 sm:gap-2 py-2.5 sm:py-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-medium"
               style={{ color: "rgba(220, 205, 255, 0.75)" }}
             >
-              <Download className="w-4 h-4" />
-              Download PNG
+              <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+              <span>Download</span>
             </button>
             <div style={{ width: "1px", background: "rgba(180,140,255,0.1)", margin: "6px 0" }} />
             <button
               data-testid="button-copy"
               onClick={handleCopy}
               disabled={!hasQR}
-              className="btn-action flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-medium"
+              className="btn-action flex-1 flex items-center justify-center gap-1.5 sm:gap-2 py-2.5 sm:py-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-medium"
               style={{ color: "rgba(220, 205, 255, 0.75)" }}
             >
-              <Copy className="w-4 h-4" />
-              Copy Image
+              <Copy className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+              <span>Copy</span>
+            </button>
+          </div>
+        </div>
+
+        {/* ── LEFT PANEL (Controls) — shown second on mobile ── */}
+        <div className="lg:col-span-7 lg:order-1 flex flex-col gap-4 sm:gap-6 p-5 sm:p-7 lg:p-9 rounded-2xl sm:rounded-3xl glass-panel glass-panel-hover">
+
+          {/* Header */}
+          <div>
+            <h1
+              className="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight mb-1 sm:mb-2"
+              style={{
+                background: "linear-gradient(135deg, #c084fc 0%, #a78bfa 40%, #818cf8 100%)",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+                backgroundClip: "text",
+                filter: "drop-shadow(0 0 18px rgba(192, 132, 252, 0.4))",
+              }}
+            >
+              QR Studio
+            </h1>
+            <p className="text-xs sm:text-sm font-light" style={{ color: "rgba(196, 181, 253, 0.55)" }}>
+              Craft precision QR codes instantly.
+            </p>
+          </div>
+
+          {/* Content textarea */}
+          <div className="space-y-1.5 sm:space-y-2">
+            <label
+              htmlFor="qr-input"
+              className="text-xs font-semibold uppercase tracking-widest"
+              style={{ color: "rgba(196, 181, 253, 0.6)" }}
+            >
+              Content
+            </label>
+            <div
+              className="input-glow rounded-xl sm:rounded-2xl overflow-hidden"
+              style={{
+                background: "rgba(0, 0, 0, 0.25)",
+                border: "1px solid rgba(180, 140, 255, 0.14)",
+                boxShadow: "inset 0 2px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.04)",
+              }}
+            >
+              <textarea
+                id="qr-input"
+                data-testid="input-qr-content"
+                placeholder="Enter URL or text..."
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                rows={3}
+                className="w-full bg-transparent resize-none px-3 sm:px-4 pt-3 sm:pt-4 pb-2 text-sm outline-none"
+                style={{
+                  color: "rgba(230, 220, 255, 0.9)",
+                  fontFamily: "var(--app-font-sans)",
+                }}
+              />
+              <div className="px-3 sm:px-4 pb-2.5 sm:pb-3 flex items-center justify-between gap-2">
+                <span className="text-xs font-mono transition-all duration-300 truncate"
+                  style={{
+                    color: text.length > 500
+                      ? "rgba(251, 146, 60, 0.85)"
+                      : text.length > 200
+                      ? "rgba(250, 204, 21, 0.7)"
+                      : "transparent",
+                    fontSize: "10px",
+                  }}
+                >
+                  {text.length > 500
+                    ? "Very dense — auto-scaled"
+                    : text.length > 200
+                    ? "Long text — QR enlarged"
+                    : ""}
+                </span>
+                <span className="text-xs font-mono flex-shrink-0"
+                  style={{
+                    color: text.length > 500
+                      ? "rgba(251, 146, 60, 0.8)"
+                      : text.length > 200
+                      ? "rgba(250, 204, 21, 0.65)"
+                      : "rgba(180, 150, 255, 0.35)",
+                    fontSize: "10px",
+                  }}
+                >
+                  {text.length} / 2953
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Controls row */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+
+            {/* Color pickers */}
+            <div className="space-y-3 sm:space-y-4">
+              {/* QR Color */}
+              <div className="space-y-1.5 sm:space-y-2">
+                <span
+                  className="text-xs font-semibold uppercase tracking-widest"
+                  style={{ color: "rgba(196, 181, 253, 0.6)" }}
+                >
+                  QR Color
+                </span>
+                <div className="color-pill flex items-center gap-2.5 sm:gap-3 px-3 py-2 rounded-xl cursor-pointer">
+                  <div
+                    className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-full overflow-hidden flex-shrink-0 cursor-pointer"
+                    style={{
+                      border: "2px solid rgba(200, 170, 255, 0.25)",
+                      boxShadow: `0 0 12px ${fgColor}44`,
+                    }}
+                  >
+                    <input
+                      type="color"
+                      data-testid="input-qr-fg-color"
+                      value={fgColor}
+                      onChange={(e) => setFgColor(e.target.value)}
+                      className="absolute -top-2 -left-2 w-14 h-14 cursor-pointer opacity-0"
+                    />
+                    <div className="w-full h-full rounded-full" style={{ background: fgColor }} />
+                  </div>
+                  <span
+                    className="text-xs sm:text-sm font-mono font-medium uppercase tracking-wider flex-1"
+                    style={{ color: "rgba(220, 205, 255, 0.8)" }}
+                  >
+                    {fgColor}
+                  </span>
+                </div>
+              </div>
+
+              {/* Swap button */}
+              <div className="flex justify-start pl-1">
+                <button
+                  onClick={handleSwapColors}
+                  className="swap-icon p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+                  title="Swap colors"
+                  data-testid="button-swap-colors"
+                >
+                  <ArrowLeftRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                </button>
+              </div>
+
+              {/* Background Color */}
+              <div className="space-y-1.5 sm:space-y-2">
+                <span
+                  className="text-xs font-semibold uppercase tracking-widest"
+                  style={{ color: "rgba(196, 181, 253, 0.6)" }}
+                >
+                  Background Color
+                </span>
+                <div className="color-pill flex items-center gap-2.5 sm:gap-3 px-3 py-2 rounded-xl cursor-pointer">
+                  <div
+                    className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-full overflow-hidden flex-shrink-0"
+                    style={{
+                      border: "2px solid rgba(200, 170, 255, 0.25)",
+                      boxShadow: `0 0 12px ${bgColor}44`,
+                    }}
+                  >
+                    <input
+                      type="color"
+                      data-testid="input-qr-bg-color"
+                      value={bgColor}
+                      onChange={(e) => setBgColor(e.target.value)}
+                      className="absolute -top-2 -left-2 w-14 h-14 cursor-pointer opacity-0"
+                    />
+                    <div className="w-full h-full rounded-full" style={{ background: bgColor }} />
+                  </div>
+                  <span
+                    className="text-xs sm:text-sm font-mono font-medium uppercase tracking-wider flex-1"
+                    style={{ color: "rgba(220, 205, 255, 0.8)" }}
+                  >
+                    {bgColor}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Size + EC */}
+            <div className="space-y-4 sm:space-y-6">
+              {/* Size slider */}
+              <div className="space-y-2 sm:space-y-3">
+                <div className="flex justify-between items-center">
+                  <span
+                    className="text-xs font-semibold uppercase tracking-widest"
+                    style={{ color: "rgba(196, 181, 253, 0.6)" }}
+                  >
+                    QR Size
+                  </span>
+                  <span
+                    className="text-xs sm:text-sm font-mono font-medium px-2 py-0.5 rounded-lg"
+                    style={{
+                      color: "rgba(196, 181, 253, 0.9)",
+                      background: "rgba(124, 58, 237, 0.15)",
+                      border: "1px solid rgba(167, 139, 250, 0.2)",
+                    }}
+                  >
+                    {size}px
+                  </span>
+                </div>
+
+                {/* Custom gradient slider */}
+                <div className="relative h-6 flex items-center">
+                  <div
+                    className="absolute w-full h-1.5 rounded-full"
+                    style={{ background: "rgba(255,255,255,0.08)" }}
+                  />
+                  <div
+                    className="absolute h-1.5 rounded-full"
+                    style={{
+                      width: `${sizePercent}%`,
+                      background: "linear-gradient(90deg, #7c3aed, #8b5cf6, #a78bfa, #c4b5fd)",
+                      boxShadow: "0 0 8px rgba(139, 92, 246, 0.5)",
+                    }}
+                  />
+                  <input
+                    type="range"
+                    data-testid="input-qr-size"
+                    min={150}
+                    max={400}
+                    step={50}
+                    value={size}
+                    onChange={(e) => setSize(Number(e.target.value))}
+                    className="absolute w-full h-full opacity-0 cursor-pointer"
+                    style={{ zIndex: 10 }}
+                  />
+                  <div
+                    className="absolute w-4 h-4 sm:w-5 sm:h-5 rounded-full pointer-events-none"
+                    style={{
+                      left: `calc(${sizePercent}% - ${sizePercent * 0.08}px - 4px)`,
+                      background: "linear-gradient(135deg, #c084fc, #7c3aed)",
+                      border: "2px solid rgba(255,255,255,0.35)",
+                      boxShadow: "0 0 14px rgba(139, 92, 246, 0.7), 0 2px 6px rgba(0,0,0,0.4)",
+                      zIndex: 5,
+                    }}
+                  />
+                </div>
+
+                {/* Size labels */}
+                <div className="flex justify-between px-0.5">
+                  {[150, 200, 250, 300, 350, 400].map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setSize(s)}
+                      className="text-xs font-mono transition-colors"
+                      style={{
+                        color: size === s
+                          ? "rgba(196, 181, 253, 0.9)"
+                          : "rgba(180, 150, 255, 0.28)",
+                        fontSize: "9px",
+                      }}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Error correction */}
+              <div className="space-y-1.5 sm:space-y-2">
+                <span
+                  className="text-xs font-semibold uppercase tracking-widest"
+                  style={{ color: "rgba(196, 181, 253, 0.6)" }}
+                >
+                  Error Correction
+                </span>
+                <div className="ec-segment flex rounded-xl p-1 gap-1">
+                  {(["L", "M", "Q", "H"] as ECLevel[]).map((lvl) => (
+                    <button
+                      key={lvl}
+                      data-testid={`input-ec-${lvl.toLowerCase()}`}
+                      onClick={() => setEcLevel(lvl)}
+                      className={`flex-1 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold rounded-lg transition-all duration-200 ${
+                        ecLevel === lvl ? "ec-item-active" : ""
+                      }`}
+                      style={
+                        ecLevel !== lvl
+                          ? { color: "rgba(180, 150, 255, 0.45)" }
+                          : undefined
+                      }
+                    >
+                      {lvl}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Generate button */}
+          <div className="mt-auto pt-1 sm:pt-2">
+            <button
+              data-testid="button-generate"
+              onClick={handleManualGenerate}
+              className="btn-generate w-full flex items-center justify-center gap-2 sm:gap-3 py-3.5 sm:py-4 rounded-xl sm:rounded-2xl text-white font-semibold text-sm sm:text-base tracking-wide"
+            >
+              <Wand2 className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" style={{ filter: "drop-shadow(0 0 6px rgba(255,255,255,0.6))" }} />
+              Generate QR Code
             </button>
           </div>
         </div>
